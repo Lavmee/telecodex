@@ -9,6 +9,8 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use uuid::Uuid;
 
+const SEEDED_ENV_UPDATED_AT: &str = "~~~~~~~~seeded";
+
 #[derive(Debug, Clone)]
 pub struct CodexThreadSummary {
     pub id: String,
@@ -214,7 +216,7 @@ where
                         .unwrap_or("Workspace"),
                 ),
                 latest_thread_id: None,
-                updated_at: String::new(),
+                updated_at: SEEDED_ENV_UPDATED_AT.to_string(),
             });
     }
     let mut items = environments.into_values().collect::<Vec<_>>();
@@ -231,16 +233,13 @@ where
 }
 
 pub fn environment_selector_key(environment: &CodexEnvironmentSummary) -> String {
-    match environment.latest_thread_id.as_deref() {
-        Some(thread_id) => format!("thread:{thread_id}"),
-        None => format!(
-            "cwd:{}",
-            Uuid::new_v5(
-                &Uuid::NAMESPACE_URL,
-                environment.cwd.to_string_lossy().as_bytes()
-            )
-        ),
-    }
+    format!(
+        "cwd:{}",
+        Uuid::new_v5(
+            &Uuid::NAMESPACE_URL,
+            environment.cwd.to_string_lossy().as_bytes()
+        )
+    )
 }
 
 fn list_all_threads(codex_home: &Path) -> Result<Vec<CodexThreadSummary>> {
@@ -960,6 +959,56 @@ mod tests {
         assert_eq!(environments[0].cwd, normalize_path(workspace));
         assert_eq!(environments[0].name, "Seeded");
         assert_eq!(environments[0].latest_thread_id, None);
+        assert_eq!(environments[0].updated_at, SEEDED_ENV_UPDATED_AT);
+    }
+
+    #[test]
+    fn keeps_seed_workspaces_visible_when_limit_is_small() {
+        let dir = tempdir().unwrap();
+        let history_workspace = workspace_path(dir.path(), "history");
+        let seed_workspace = dir.path().join("seed");
+        let sessions_dir = dir.path().join("sessions");
+        fs::create_dir_all(&sessions_dir).unwrap();
+        fs::create_dir_all(&history_workspace).unwrap();
+        fs::create_dir_all(seed_workspace.join(".codex").join("environments")).unwrap();
+        fs::write(
+            sessions_dir.join("rollout-1.jsonl"),
+            format!(
+                "{{\"timestamp\":\"2026-03-13T09:00:00Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"env-1\",\"timestamp\":\"2026-03-13T09:00:00Z\",\"cwd\":\"{}\",\"source\":\"exec\"}}}}\n",
+                escaped_json_path(&history_workspace)
+            ),
+        )
+        .unwrap();
+
+        let environments =
+            list_environments_for_sources(dir.path(), 1, false, true, &[seed_workspace.clone()])
+                .unwrap();
+
+        assert_eq!(environments.len(), 1);
+        assert_eq!(environments[0].cwd, normalize_path(seed_workspace));
+        assert_eq!(environments[0].latest_thread_id, None);
+    }
+
+    #[test]
+    fn uses_stable_selector_for_seeded_and_historical_environments() {
+        let cwd = PathBuf::from("/tmp/workspace");
+        let historical = CodexEnvironmentSummary {
+            cwd: cwd.clone(),
+            name: "History".to_string(),
+            latest_thread_id: Some("thread-1".to_string()),
+            updated_at: "2026-03-13T09:00:00Z".to_string(),
+        };
+        let seeded = CodexEnvironmentSummary {
+            cwd,
+            name: "Seeded".to_string(),
+            latest_thread_id: None,
+            updated_at: SEEDED_ENV_UPDATED_AT.to_string(),
+        };
+
+        assert_eq!(
+            environment_selector_key(&historical),
+            environment_selector_key(&seeded)
+        );
     }
 
     #[test]
