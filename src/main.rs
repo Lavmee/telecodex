@@ -8,7 +8,6 @@ mod models;
 mod render;
 mod store;
 mod telegram;
-mod transcribe;
 
 use anyhow::Result;
 use tokio::time::{Duration, sleep};

@@ -69,8 +69,7 @@ pub(super) async fn process_turn(
             message_id: placeholder.message_id,
         },
     )));
-    let mut runtime_request = queued.request.clone();
-    enrich_audio_transcripts(&shared, &mut runtime_request, &turn_workspace, &sink).await;
+    let runtime_request = queued.request.clone();
     let runtime_request = prepare_runtime_request(&session, &runtime_request, &turn_workspace);
     let runtime_request = enrich_runtime_request_with_codex_history(&session, runtime_request);
 
@@ -556,71 +555,6 @@ fn progress_status_text(text: &str) -> String {
         "⏳".to_string()
     } else {
         format!("⏳ {text}")
-    }
-}
-
-async fn enrich_audio_transcripts(
-    shared: &Arc<AppShared>,
-    request: &mut TurnRequest,
-    workspace: &TurnWorkspace,
-    sink: &Arc<Mutex<LiveTurnSink>>,
-) {
-    let Some(model_dir) = shared.handy_model_dir.clone() else {
-        return;
-    };
-
-    let total = request
-        .attachments
-        .iter()
-        .filter(|attachment| {
-            matches!(
-                attachment.kind,
-                AttachmentKind::Audio | AttachmentKind::Voice
-            )
-        })
-        .count();
-
-    if total == 0 {
-        return;
-    }
-
-    for (idx, attachment) in request
-        .attachments
-        .iter_mut()
-        .filter(|attachment| {
-            matches!(
-                attachment.kind,
-                AttachmentKind::Audio | AttachmentKind::Voice
-            )
-        })
-        .enumerate()
-    {
-        let label = format!(
-            "Transcribing audio {}/{} with Handy model...",
-            idx + 1,
-            total
-        );
-        if let Err(error) = sink.lock().await.set_progress(label).await {
-            tracing::debug!("failed to update transcription progress: {error:#}");
-        }
-
-        match transcribe_audio_file(
-            model_dir.clone(),
-            attachment.path.clone(),
-            workspace.root.clone(),
-        )
-        .await
-        {
-            Ok(transcript) => {
-                attachment.transcript = Some(transcript);
-            }
-            Err(error) => {
-                tracing::warn!(
-                    "audio transcription failed for {}: {error:#}",
-                    attachment.path.display()
-                );
-            }
-        }
     }
 }
 
